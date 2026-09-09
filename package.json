@@ -19,7 +19,7 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "start": "wrangler dev --config dist/server/wrangler.json",
-    "deploy": "pnpm build && wrangler deploy",
+    "deploy": "wrangler deploy --config dist/server/wrangler.json",
     "lint": "oxlint",
     "format": "oxfmt",
     "db:generate": "drizzle-kit generate"
