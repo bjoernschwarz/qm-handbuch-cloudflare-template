@@ -86,7 +86,7 @@ async function ensureSchema() {
     db.prepare("CREATE TABLE IF NOT EXISTS template_settings (practice_id TEXT PRIMARY KEY, root_page_id TEXT NOT NULL, package_version INTEGER NOT NULL, installed_at TEXT NOT NULL, installed_by TEXT NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS template_pages (practice_id TEXT NOT NULL, id TEXT NOT NULL, parent_source_id TEXT, title TEXT NOT NULL, depth INTEGER NOT NULL, body TEXT NOT NULL, sort_order INTEGER NOT NULL, PRIMARY KEY(practice_id, id))"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_template_pages_practice_order ON template_pages(practice_id, sort_order)"),
-    db.prepare("CREATE TABLE IF NOT EXISTS template_assets (practice_id TEXT NOT NULL, id TEXT NOT NULL, r2_key TEXT, external_url TEXT, title TEXT NOT NULL, mime TEXT NOT NULL, PRIMARY KEY(practice_id, id))"),
+    db.prepare("CREATE TABLE IF NOT EXISTS template_assets (practice_id TEXT NOT NULL, id TEXT NOT NULL, data BLOB, external_url TEXT, title TEXT NOT NULL, mime TEXT NOT NULL, PRIMARY KEY(practice_id, id))"),
   ]);
 }
 
@@ -200,14 +200,12 @@ async function handbookResponse(context: Context, includeLibrary = false) {
 }
 
 async function templateAssetResponse(context: Context, assetId: string) {
-  const metadata = await env.DB.prepare("SELECT r2_key AS r2Key, external_url AS externalUrl, title, mime FROM template_assets WHERE practice_id = ? AND id = ? LIMIT 1")
-    .bind(context.practiceId, assetId).first<{ r2Key: string | null; externalUrl: string | null; title: string; mime: string }>();
+  const metadata = await env.DB.prepare("SELECT data, external_url AS externalUrl, title, mime FROM template_assets WHERE practice_id = ? AND id = ? LIMIT 1")
+    .bind(context.practiceId, assetId).first<{ data: number[] | null; externalUrl: string | null; title: string; mime: string }>();
   if (!metadata) return json({ error: "ASSET_NOT_FOUND" }, 404);
   if (metadata.externalUrl) return Response.redirect(metadata.externalUrl, 302);
-  if (!metadata.r2Key) return json({ error: "ASSET_NOT_FOUND" }, 404);
-  const object = await env.TEMPLATE_ASSETS.get(metadata.r2Key);
-  if (!object) return json({ error: "ASSET_NOT_FOUND" }, 404);
-  return new Response(object.body, {
+  if (!metadata.data) return json({ error: "ASSET_NOT_FOUND" }, 404);
+  return new Response(Uint8Array.from(metadata.data), {
     headers: {
       "content-type": metadata.mime,
       "cache-control": "private, max-age=3600",
@@ -260,13 +258,8 @@ export async function POST(request: Request) {
       const uniqueAssetIds = new Set(templatePackage.assets.map((asset) => asset.id));
       if (uniquePageIds.size !== templatePackage.pages.length || uniqueAssetIds.size !== templatePackage.assets.length || !uniquePageIds.has(templatePackage.rootPageId)) return json({ error: "INVALID_TEMPLATE_PACKAGE" }, 400);
 
-      const embeddedAssets = templatePackage.assets.filter((asset) => asset.data);
-      for (let index = 0; index < embeddedAssets.length; index += 8) {
-        await Promise.all(embeddedAssets.slice(index, index + 8).map(async (asset) => {
-          if (!/^[-\w.]+$/.test(asset.id) || !/^[-\w.+/]+$/.test(asset.mime) || !asset.data || asset.data.length > 12_000_000) throw new Error("INVALID_TEMPLATE_PACKAGE");
-          const key = `${context.practiceId}/${asset.id}`;
-          await env.TEMPLATE_ASSETS.put(key, decodeBase64(asset.data), { httpMetadata: { contentType: asset.mime } });
-        }));
+      for (const asset of templatePackage.assets) {
+        if (!/^[-\w.]+$/.test(asset.id) || !/^[-\w.+/]+$/.test(asset.mime) || (asset.data && asset.data.length > 2_400_000)) throw new Error("INVALID_TEMPLATE_PACKAGE");
       }
 
       await env.DB.batch([
@@ -275,8 +268,8 @@ export async function POST(request: Request) {
       ]);
       const pageStatements = templatePackage.pages.map((page) => env.DB.prepare("INSERT INTO template_pages (practice_id, id, parent_source_id, title, depth, body, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .bind(context.practiceId, page.id.slice(0, 160), page.parentSourceId?.slice(0, 160) ?? null, page.title.slice(0, 300), page.depth, page.body, page.sortOrder));
-      const assetStatements = templatePackage.assets.map((asset) => env.DB.prepare("INSERT INTO template_assets (practice_id, id, r2_key, external_url, title, mime) VALUES (?, ?, ?, ?, ?, ?)")
-        .bind(context.practiceId, asset.id, asset.data ? `${context.practiceId}/${asset.id}` : null, asset.externalUrl ?? null, asset.title.slice(0, 300), asset.mime));
+      const assetStatements = templatePackage.assets.map((asset) => env.DB.prepare("INSERT INTO template_assets (practice_id, id, data, external_url, title, mime) VALUES (?, ?, ?, ?, ?, ?)")
+        .bind(context.practiceId, asset.id, asset.data ? decodeBase64(asset.data) : null, asset.externalUrl ?? null, asset.title.slice(0, 300), asset.mime));
       for (let index = 0; index < pageStatements.length; index += 50) await env.DB.batch(pageStatements.slice(index, index + 50));
       for (let index = 0; index < assetStatements.length; index += 50) await env.DB.batch(assetStatements.slice(index, index + 50));
       await env.DB.prepare("INSERT INTO template_settings (practice_id, root_page_id, package_version, installed_at, installed_by) VALUES (?, ?, ?, ?, ?) ON CONFLICT(practice_id) DO UPDATE SET root_page_id = excluded.root_page_id, package_version = excluded.package_version, installed_at = excluded.installed_at, installed_by = excluded.installed_by")

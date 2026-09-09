@@ -8,10 +8,9 @@ Diese Vorlage installiert die QM-Handbuch-Anwendung vollständig im Cloudflare-K
 
 - ein eigener Cloudflare Worker für die QM-Handbuch-Anwendung
 - eine eigene D1-Datenbank für Praxisdaten, Rollen, Entwürfe und Freigaben
-- ein eigener R2-Speicher für Bilder und Anlagen des Musterhandbuchs
 - eine eigene Adresse unter `workers.dev`
 
-Das lizenzierte Musterhandbuch ist **nicht** Bestandteil dieses öffentlichen Installationsgerüsts. Nach der Bereitstellung lädt die Praxisinhaberin oder der Praxisinhaber einmalig das erhaltene `.qmpackage` in die eigene Installation. Danach befinden sich alle Seiten, Hierarchien und Bilder im Cloudflare-Konto der Praxis.
+Das lizenzierte Musterhandbuch ist **nicht** Bestandteil dieses öffentlichen Installationsgerüsts. Nach der Bereitstellung lädt die Praxisinhaberin oder der Praxisinhaber einmalig das erhaltene `.qmpackage` in die eigene Installation. Danach befinden sich alle Seiten, Hierarchien und Bilder in der eigenen D1-Datenbank im Cloudflare-Konto der Praxis. Ein separates R2-Abonnement ist nicht erforderlich.
 
 ## Kundenablauf
 
@@ -40,4 +39,4 @@ Lokal wird ein Beispielkonto als Praxisleitung verwendet. Die Tabellen werden be
 
 ## Datenschutz und Mandantentrennung
 
-Jede Bereitstellung ist bewusst **Single Tenant**: genau eine Praxis pro Worker, D1-Datenbank und R2-Speicher. Es gibt keine zentrale Kundendatenbank und keine nachträgliche Verbindung zum Herausgeber des Musterhandbuchs.
+Jede Bereitstellung ist bewusst **Single Tenant**: genau eine Praxis pro Worker und D1-Datenbank. Es gibt keine zentrale Kundendatenbank und keine nachträgliche Verbindung zum Herausgeber des Musterhandbuchs.

@@ -22,7 +22,7 @@ CREATE INDEX IF NOT EXISTS `idx_template_pages_practice_order` ON `template_page
 CREATE TABLE IF NOT EXISTS `template_assets` (
   `practice_id` text NOT NULL,
   `id` text NOT NULL,
-  `r2_key` text,
+  `data` blob,
   `external_url` text,
   `title` text NOT NULL,
   `mime` text NOT NULL,

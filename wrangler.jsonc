@@ -13,12 +13,6 @@
 			"migrations_dir": "drizzle"
 		}
 	],
-	"r2_buckets": [
-		{
-			"binding": "TEMPLATE_ASSETS",
-			"bucket_name": "qm-handbuch-vorlagen"
-		}
-	],
 	"vars": {
 		"QM_SINGLE_TENANT": "true"
 	}
