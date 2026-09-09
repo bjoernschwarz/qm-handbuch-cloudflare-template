@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1788521842324,
+      "tag": "0000_slippery_lizard",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1788521881084,
+      "tag": "0001_lean_vin_gonzales",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1788763722592,
+      "tag": "0002_loving_dark_phoenix",
+      "breakpoints": true
+    }
+  ]
+}

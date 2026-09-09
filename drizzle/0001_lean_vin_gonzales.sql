@@ -1,0 +1,1 @@
+ALTER TABLE `handbook_pages` ADD `published_content` text;
