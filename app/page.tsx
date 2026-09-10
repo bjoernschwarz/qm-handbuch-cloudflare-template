@@ -23,6 +23,9 @@ type HandbookData = { practice: Practice; role: Role; currentUser: { id: string;
 type View = "library" | "handbook" | "team";
 type Asset = { src: string; title: string; mime: string };
 type EditorData = { id: string; title: string; mode: "source" | "html" | "plain"; content: string; sourceContent: string };
+type TemplatePageInput = { id: string; parentSourceId: string | null; title: string; depth: number; body: string; sortOrder: number };
+type TemplateAssetInput = { id: string; title: string; mime: string; data?: string; externalUrl?: string };
+type TemplatePackage = { format: "heilmittel-qm-template"; version: number; rootPageId: string; pages: TemplatePageInput[]; assets: TemplateAssetInput[] };
 
 const emptyTree: PageNode = { id: "", title: "QM-Handbuch", depth: 0, body: "", children: [] };
 const SOURCE_CONTENT = "__QM_SOURCE_ADF__";
@@ -224,6 +227,8 @@ export default function Home() {
   const [practiceForm, setPracticeForm] = useState({ name: "", contactName: "", qmResponsible: "", logoText: "QM" });
   const [inviteForm, setInviteForm] = useState<{ email: string; role: "editor" | "viewer" }>({ email: "", role: "viewer" });
   const [busy, setBusy] = useState(false);
+  const [importProgress, setImportProgress] = useState(0);
+  const [importStage, setImportStage] = useState("");
   const [notice, setNotice] = useState("");
   const [loadError, setLoadError] = useState<"AUTH_REQUIRED" | "NOT_INVITED" | "LOAD_FAILED" | null>(null);
 
@@ -298,17 +303,86 @@ export default function Home() {
     setBusy(true); setNotice("");
     try {
       if (file.size > 45_000_000) throw new Error("PACKAGE_TOO_LARGE");
-      const templatePackage = JSON.parse(await file.text()) as unknown;
-      const response = await fetch("/api/handbook", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "importTemplate", templatePackage }) });
-      const result = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(result.error ?? "IMPORT_FAILED");
+      const templatePackage = JSON.parse(await file.text()) as Partial<TemplatePackage>;
+      if (templatePackage.format !== "heilmittel-qm-template" || templatePackage.version !== 1 || typeof templatePackage.rootPageId !== "string" || !Array.isArray(templatePackage.pages) || !Array.isArray(templatePackage.assets)) throw new Error("INVALID_TEMPLATE_PACKAGE");
+      const pages = templatePackage.pages;
+      const assets = templatePackage.assets;
+      const totalItems = pages.length + assets.length;
+      let importedItems = 0;
+      const updateProgress = (stage: string) => {
+        setImportStage(stage);
+        setImportProgress(Math.min(99, Math.round((importedItems / Math.max(totalItems, 1)) * 100)));
+      };
+      const postImport = async (payload: Record<string, unknown>) => {
+        const response = await fetch("/api/handbook", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+        const result = await response.json().catch(() => ({ error: `HTTP_${response.status}` })) as { error?: string; importId?: string };
+        if (!response.ok) throw new Error(result.error ?? "IMPORT_FAILED");
+        return result;
+      };
+
+      updateProgress("Installation wird vorbereitet …");
+      const started = await postImport({
+        action: "beginTemplateImport",
+        format: templatePackage.format,
+        version: templatePackage.version,
+        rootPageId: templatePackage.rootPageId,
+        pageCount: pages.length,
+        assetCount: assets.length,
+      });
+      if (!started.importId) throw new Error("IMPORT_FAILED");
+      const importId = started.importId;
+
+      let pageChunk: TemplatePageInput[] = [];
+      let pageChunkBytes = 0;
+      const uploadPageChunk = async () => {
+        if (!pageChunk.length) return;
+        updateProgress(`Seiten werden übertragen (${importedItems + 1} von ${totalItems}) …`);
+        await postImport({ action: "importTemplatePages", importId, pages: pageChunk });
+        importedItems += pageChunk.length;
+        pageChunk = [];
+        pageChunkBytes = 0;
+      };
+      for (const page of pages) {
+        const pageBytes = new Blob([JSON.stringify(page)]).size;
+        if (pageChunk.length && (pageChunk.length >= 10 || pageChunkBytes + pageBytes > 220_000)) await uploadPageChunk();
+        pageChunk.push(page);
+        pageChunkBytes += pageBytes;
+      }
+      await uploadPageChunk();
+
+      const externalAssets = assets.filter((asset) => !asset.data);
+      for (let index = 0; index < externalAssets.length; index += 20) {
+        const chunk = externalAssets.slice(index, index + 20);
+        updateProgress(`Verknüpfte Anlagen werden übertragen (${importedItems + 1} von ${totalItems}) …`);
+        await postImport({ action: "importTemplateExternalAssets", importId, assets: chunk });
+        importedItems += chunk.length;
+      }
+
+      const embeddedAssets = assets.filter((asset) => Boolean(asset.data));
+      for (const asset of embeddedAssets) {
+        updateProgress(`Bilder werden übertragen (${importedItems + 1} von ${totalItems}) …`);
+        const binary = atob(asset.data ?? "");
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+        const params = new URLSearchParams({ action: "importTemplateAsset", importId, id: asset.id, title: asset.title, mime: asset.mime });
+        const response = await fetch(`/api/handbook?${params}`, { method: "PUT", headers: { "content-type": "application/octet-stream" }, body: bytes.buffer });
+        const result = await response.json().catch(() => ({ error: `HTTP_${response.status}` })) as { error?: string };
+        if (!response.ok) throw new Error(result.error ?? "IMPORT_FAILED");
+        importedItems += 1;
+      }
+
+      setImportProgress(99);
+      setImportStage("Installation wird abgeschlossen …");
+      await postImport({ action: "finalizeTemplateImport", importId });
       await load();
+      setImportProgress(100);
       setNotice("Das Musterhandbuch wurde vollständig installiert.");
     } catch (error) {
       const code = error instanceof Error ? error.message : "IMPORT_FAILED";
-      setNotice(code === "PACKAGE_TOO_LARGE" ? "Das Vorlagenpaket ist zu groß." : code === "INVALID_TEMPLATE_PACKAGE" ? "Diese Datei ist kein gültiges QM-Vorlagenpaket." : "Das Musterhandbuch konnte nicht installiert werden.");
+      setNotice(code === "PACKAGE_TOO_LARGE" ? "Das Vorlagenpaket ist zu groß." : code === "INVALID_TEMPLATE_PACKAGE" ? "Diese Datei ist kein gültiges QM-Vorlagenpaket." : "Die Installation wurde unterbrochen. Bitte wähle das Vorlagenpaket noch einmal aus.");
     } finally {
       setBusy(false);
+      setImportStage("");
       if (importInputRef.current) importInputRef.current.value = "";
     }
   }
@@ -320,7 +394,7 @@ export default function Home() {
 
   if (!data) return <main className="access-error"><section><div className="brand-mark"><BookOpen size={22} /></div><p className="eyebrow">QM-HANDBUCH</p><h1>Handbuch wird geladen</h1><p>Die geschützten Praxisdaten und Vorlagen werden vorbereitet.</p></section></main>;
 
-  if (!data.templateInstalled) return <main className="template-setup"><section className="template-setup-card"><div className="brand-mark"><Library size={22} /></div><p className="eyebrow">EIGENE PRAXIS-INSTALLATION</p><h1>Musterhandbuch installieren</h1><p>Die Anwendung und die Praxisdaten liegen bereits in diesem Cloudflare-Konto. Installiere jetzt einmalig das geschützte Musterhandbuch mit allen Seiten, Hierarchien und Bildern.</p>{notice && <div className="setup-notice">{notice}</div>}{data.role === "owner" ? <><input ref={importInputRef} className="visually-hidden" type="file" accept=".json,.qmpackage,application/json" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importTemplate(file); }} /><button disabled={busy} onClick={() => importInputRef.current?.click()}><ClipboardCopy size={17} /> {busy ? "Wird installiert …" : "Vorlagenpaket auswählen"}</button><small>Die Datei wird ausschließlich in diese Praxis-Installation übertragen.</small></> : <div className="setup-notice">Die Praxisinhaberin oder der Praxisinhaber muss das Vorlagenpaket zuerst installieren.</div>}</section></main>;
+  if (!data.templateInstalled) return <main className="template-setup"><section className="template-setup-card"><div className="brand-mark"><Library size={22} /></div><p className="eyebrow">EIGENE PRAXIS-INSTALLATION</p><h1>Musterhandbuch installieren</h1><p>Die Anwendung und die Praxisdaten liegen bereits in diesem Cloudflare-Konto. Installiere jetzt einmalig das geschützte Musterhandbuch mit allen Seiten, Hierarchien und Bildern.</p>{notice && <div className="setup-notice">{notice}</div>}{data.role === "owner" ? <><input ref={importInputRef} className="visually-hidden" type="file" accept=".json,.qmpackage,application/json" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importTemplate(file); }} /><button disabled={busy} onClick={() => importInputRef.current?.click()}><ClipboardCopy size={17} /> {busy ? `Wird installiert … ${importProgress}%` : "Vorlagenpaket auswählen"}</button>{busy && <div className="import-progress" aria-live="polite"><span style={{ width: `${importProgress}%` }} /><small>{importStage}</small></div>}<small>Die Datei wird ausschließlich in diese Praxis-Installation übertragen.</small></> : <div className="setup-notice">Die Praxisinhaberin oder der Praxisinhaber muss das Vorlagenpaket zuerst installieren.</div>}</section></main>;
 
   const nav = <aside className={`sidebar ${mobileNav ? "mobile-open" : ""}`}>
     <div className="sidebar-head">
