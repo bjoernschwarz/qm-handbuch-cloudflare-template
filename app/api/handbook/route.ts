@@ -9,6 +9,7 @@ type PageNode = { id: string; title: string; depth: number; body: string; childr
 type TemplatePageRow = { id: string; parentSourceId: string | null; title: string; depth: number; body: string; sortOrder: number };
 type TemplateAssetInput = { id: string; title: string; mime: string; data?: string; externalUrl?: string };
 type TemplatePackage = { format: "heilmittel-qm-template"; version: number; rootPageId: string; pages: TemplatePageRow[]; assets: TemplateAssetInput[] };
+type TemplateImportRow = { importId: string; rootPageId: string; packageVersion: number; expectedPages: number; expectedAssets: number };
 const SOURCE_CONTENT = "__QM_SOURCE_ADF__";
 const HTML_CONTENT = "__QM_RICH_HTML__";
 
@@ -87,7 +88,24 @@ async function ensureSchema() {
     db.prepare("CREATE TABLE IF NOT EXISTS template_pages (practice_id TEXT NOT NULL, id TEXT NOT NULL, parent_source_id TEXT, title TEXT NOT NULL, depth INTEGER NOT NULL, body TEXT NOT NULL, sort_order INTEGER NOT NULL, PRIMARY KEY(practice_id, id))"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_template_pages_practice_order ON template_pages(practice_id, sort_order)"),
     db.prepare("CREATE TABLE IF NOT EXISTS template_assets (practice_id TEXT NOT NULL, id TEXT NOT NULL, data BLOB, external_url TEXT, title TEXT NOT NULL, mime TEXT NOT NULL, PRIMARY KEY(practice_id, id))"),
+    db.prepare("CREATE TABLE IF NOT EXISTS template_imports (practice_id TEXT PRIMARY KEY, import_id TEXT NOT NULL, root_page_id TEXT NOT NULL, package_version INTEGER NOT NULL, expected_pages INTEGER NOT NULL, expected_assets INTEGER NOT NULL, started_at TEXT NOT NULL, started_by TEXT NOT NULL)"),
   ]);
+}
+
+async function activeTemplateImport(context: Context, importId: string | undefined) {
+  if (!importId) return null;
+  return env.DB.prepare("SELECT import_id AS importId, root_page_id AS rootPageId, package_version AS packageVersion, expected_pages AS expectedPages, expected_assets AS expectedAssets FROM template_imports WHERE practice_id = ? AND import_id = ? LIMIT 1")
+    .bind(context.practiceId, importId).first<TemplateImportRow>();
+}
+
+function validateTemplatePage(page: TemplatePageRow) {
+  if (!page || typeof page.id !== "string" || !page.id || typeof page.title !== "string" || typeof page.body !== "string" || typeof page.depth !== "number" || typeof page.sortOrder !== "number") throw new Error("INVALID_TEMPLATE_PACKAGE");
+  if (page.parentSourceId !== null && typeof page.parentSourceId !== "string") throw new Error("INVALID_TEMPLATE_PACKAGE");
+  if (page.body.length > 1_900_000) throw new Error("INVALID_TEMPLATE_PACKAGE");
+}
+
+function validateTemplateAssetMetadata(asset: TemplateAssetInput) {
+  if (!asset || typeof asset.id !== "string" || !/^[-\w.]+$/.test(asset.id) || typeof asset.title !== "string" || typeof asset.mime !== "string" || !/^[-\w.+/]+$/.test(asset.mime)) throw new Error("INVALID_TEMPLATE_PACKAGE");
 }
 
 async function getContext(): Promise<Context> {
@@ -233,7 +251,7 @@ export async function POST(request: Request) {
     const context = await getContext();
     if (context.role === "viewer") return json({ error: "FORBIDDEN" }, 403);
     const body = await request.json() as {
-      action: "importTemplate" | "copy" | "save" | "publish" | "unpublish" | "archive" | "renamePractice" | "savePractice" | "inviteMember" | "cancelInvite" | "updateMemberRole" | "removeMember";
+      action: "importTemplate" | "beginTemplateImport" | "importTemplatePages" | "importTemplateExternalAssets" | "finalizeTemplateImport" | "copy" | "save" | "publish" | "unpublish" | "archive" | "renamePractice" | "savePractice" | "inviteMember" | "cancelInvite" | "updateMemberRole" | "removeMember";
       id?: string;
       sourcePageId?: string;
       parentSourceId?: string | null;
@@ -247,12 +265,66 @@ export async function POST(request: Request) {
       role?: "editor" | "viewer";
       memberUserId?: string;
       templatePackage?: unknown;
+      format?: string;
+      version?: number;
+      rootPageId?: string;
+      pageCount?: number;
+      assetCount?: number;
+      importId?: string;
+      pages?: TemplatePageRow[];
+      assets?: TemplateAssetInput[];
     };
     const now = new Date().toISOString();
-    const ownerActions = new Set(["importTemplate", "renamePractice", "savePractice", "inviteMember", "cancelInvite", "updateMemberRole", "removeMember"]);
+    const ownerActions = new Set(["importTemplate", "beginTemplateImport", "importTemplatePages", "importTemplateExternalAssets", "finalizeTemplateImport", "renamePractice", "savePractice", "inviteMember", "cancelInvite", "updateMemberRole", "removeMember"]);
     if (ownerActions.has(body.action) && context.role !== "owner") return json({ error: "OWNER_REQUIRED" }, 403);
 
-    if (body.action === "importTemplate") {
+    if (body.action === "beginTemplateImport") {
+      if (body.format !== "heilmittel-qm-template" || body.version !== 1 || typeof body.rootPageId !== "string" || !body.rootPageId || !Number.isInteger(body.pageCount) || !Number.isInteger(body.assetCount) || (body.pageCount ?? 0) < 1 || (body.pageCount ?? 0) > 1000 || (body.assetCount ?? 0) < 0 || (body.assetCount ?? 0) > 500) throw new Error("INVALID_TEMPLATE_PACKAGE");
+      const importId = crypto.randomUUID();
+      await env.DB.batch([
+        env.DB.prepare("DELETE FROM template_settings WHERE practice_id = ?").bind(context.practiceId),
+        env.DB.prepare("DELETE FROM template_pages WHERE practice_id = ?").bind(context.practiceId),
+        env.DB.prepare("DELETE FROM template_assets WHERE practice_id = ?").bind(context.practiceId),
+        env.DB.prepare("INSERT INTO template_imports (practice_id, import_id, root_page_id, package_version, expected_pages, expected_assets, started_at, started_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(practice_id) DO UPDATE SET import_id = excluded.import_id, root_page_id = excluded.root_page_id, package_version = excluded.package_version, expected_pages = excluded.expected_pages, expected_assets = excluded.expected_assets, started_at = excluded.started_at, started_by = excluded.started_by")
+          .bind(context.practiceId, importId, body.rootPageId.slice(0, 160), body.version, body.pageCount, body.assetCount, now, context.user.id),
+      ]);
+      return json({ importId });
+    } else if (body.action === "importTemplatePages") {
+      const activeImport = await activeTemplateImport(context, body.importId);
+      if (!activeImport) return json({ error: "IMPORT_SESSION_EXPIRED" }, 409);
+      if (!Array.isArray(body.pages) || body.pages.length < 1 || body.pages.length > 12) throw new Error("INVALID_TEMPLATE_PACKAGE");
+      body.pages.forEach(validateTemplatePage);
+      const uniqueIds = new Set(body.pages.map((page) => page.id));
+      if (uniqueIds.size !== body.pages.length) throw new Error("INVALID_TEMPLATE_PACKAGE");
+      await env.DB.batch(body.pages.map((page) => env.DB.prepare("INSERT INTO template_pages (practice_id, id, parent_source_id, title, depth, body, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(practice_id, id) DO UPDATE SET parent_source_id = excluded.parent_source_id, title = excluded.title, depth = excluded.depth, body = excluded.body, sort_order = excluded.sort_order")
+        .bind(context.practiceId, page.id.slice(0, 160), page.parentSourceId?.slice(0, 160) ?? null, page.title.slice(0, 300), page.depth, page.body, page.sortOrder)));
+      return json({ imported: body.pages.length });
+    } else if (body.action === "importTemplateExternalAssets") {
+      const activeImport = await activeTemplateImport(context, body.importId);
+      if (!activeImport) return json({ error: "IMPORT_SESSION_EXPIRED" }, 409);
+      if (!Array.isArray(body.assets) || body.assets.length < 1 || body.assets.length > 25) throw new Error("INVALID_TEMPLATE_PACKAGE");
+      for (const asset of body.assets) {
+        validateTemplateAssetMetadata(asset);
+        if (typeof asset.externalUrl !== "string" || !asset.externalUrl.startsWith("https://") || asset.data !== undefined) throw new Error("INVALID_TEMPLATE_PACKAGE");
+      }
+      await env.DB.batch(body.assets.map((asset) => env.DB.prepare("INSERT INTO template_assets (practice_id, id, data, external_url, title, mime) VALUES (?, ?, NULL, ?, ?, ?) ON CONFLICT(practice_id, id) DO UPDATE SET data = NULL, external_url = excluded.external_url, title = excluded.title, mime = excluded.mime")
+        .bind(context.practiceId, asset.id, asset.externalUrl, asset.title.slice(0, 300), asset.mime)));
+      return json({ imported: body.assets.length });
+    } else if (body.action === "finalizeTemplateImport") {
+      const activeImport = await activeTemplateImport(context, body.importId);
+      if (!activeImport) return json({ error: "IMPORT_SESSION_EXPIRED" }, 409);
+      const [pageCount, assetCount, rootPage] = await Promise.all([
+        env.DB.prepare("SELECT COUNT(*) AS count FROM template_pages WHERE practice_id = ?").bind(context.practiceId).first<{ count: number }>(),
+        env.DB.prepare("SELECT COUNT(*) AS count FROM template_assets WHERE practice_id = ?").bind(context.practiceId).first<{ count: number }>(),
+        env.DB.prepare("SELECT 1 AS present FROM template_pages WHERE practice_id = ? AND id = ? LIMIT 1").bind(context.practiceId, activeImport.rootPageId).first(),
+      ]);
+      if (pageCount?.count !== activeImport.expectedPages || assetCount?.count !== activeImport.expectedAssets || !rootPage) return json({ error: "IMPORT_INCOMPLETE", importedPages: pageCount?.count ?? 0, importedAssets: assetCount?.count ?? 0 }, 409);
+      await env.DB.batch([
+        env.DB.prepare("INSERT INTO template_settings (practice_id, root_page_id, package_version, installed_at, installed_by) VALUES (?, ?, ?, ?, ?) ON CONFLICT(practice_id) DO UPDATE SET root_page_id = excluded.root_page_id, package_version = excluded.package_version, installed_at = excluded.installed_at, installed_by = excluded.installed_by")
+          .bind(context.practiceId, activeImport.rootPageId, activeImport.packageVersion, now, context.user.id),
+        env.DB.prepare("DELETE FROM template_imports WHERE practice_id = ? AND import_id = ?").bind(context.practiceId, activeImport.importId),
+      ]);
+    } else if (body.action === "importTemplate") {
       const templatePackage = validatePackage(body.templatePackage);
       const uniquePageIds = new Set(templatePackage.pages.map((page) => page.id));
       const uniqueAssetIds = new Set(templatePackage.assets.map((asset) => asset.id));
@@ -318,6 +390,32 @@ export async function POST(request: Request) {
       return json({ error: "INVALID_ACTION" }, 400);
     }
     return handbookResponse(context);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "UNKNOWN_ERROR";
+    return json({ error: message }, errorStatus(message) === 500 ? 400 : errorStatus(message));
+  }
+}
+
+export async function PUT(request: Request) {
+  try {
+    const context = await getContext();
+    if (context.role !== "owner") return json({ error: "OWNER_REQUIRED" }, 403);
+    const url = new URL(request.url);
+    if (url.searchParams.get("action") !== "importTemplateAsset") return json({ error: "INVALID_ACTION" }, 400);
+    const importId = url.searchParams.get("importId") ?? undefined;
+    const activeImport = await activeTemplateImport(context, importId);
+    if (!activeImport) return json({ error: "IMPORT_SESSION_EXPIRED" }, 409);
+    const asset: TemplateAssetInput = {
+      id: url.searchParams.get("id") ?? "",
+      title: url.searchParams.get("title") ?? "",
+      mime: url.searchParams.get("mime") ?? "",
+    };
+    validateTemplateAssetMetadata(asset);
+    const data = await request.arrayBuffer();
+    if (data.byteLength < 1 || data.byteLength > 1_999_000) return json({ error: "INVALID_TEMPLATE_PACKAGE" }, 400);
+    await env.DB.prepare("INSERT INTO template_assets (practice_id, id, data, external_url, title, mime) VALUES (?, ?, ?, NULL, ?, ?) ON CONFLICT(practice_id, id) DO UPDATE SET data = excluded.data, external_url = NULL, title = excluded.title, mime = excluded.mime")
+      .bind(context.practiceId, asset.id, data, asset.title.slice(0, 300), asset.mime).run();
+    return json({ imported: 1 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "UNKNOWN_ERROR";
     return json({ error: message }, errorStatus(message) === 500 ? 400 : errorStatus(message));
