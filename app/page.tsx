@@ -344,7 +344,7 @@ export default function Home() {
       };
       for (const page of pages) {
         const pageBytes = new Blob([JSON.stringify(page)]).size;
-        if (pageChunk.length && (pageChunk.length >= 10 || pageChunkBytes + pageBytes > 220_000)) await uploadPageChunk();
+        if (pageChunk.length && (pageChunk.length >= 4 || pageChunkBytes + pageBytes > 70_000)) await uploadPageChunk();
         pageChunk.push(page);
         pageChunkBytes += pageBytes;
       }
