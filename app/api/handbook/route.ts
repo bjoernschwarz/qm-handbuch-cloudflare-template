@@ -12,6 +12,7 @@ type TemplatePackage = { format: "heilmittel-qm-template"; version: number; root
 type TemplateImportRow = { importId: string; rootPageId: string; packageVersion: number; expectedPages: number; expectedAssets: number };
 const SOURCE_CONTENT = "__QM_SOURCE_ADF__";
 const HTML_CONTENT = "__QM_RICH_HTML__";
+let schemaReady: Promise<unknown> | null = null;
 
 function buildTree(rows: TemplatePageRow[], rootPageId: string, includeBodies: boolean): PageNode | null {
   const nodes = new Map(rows.map((row) => [row.id, { id: row.id, title: row.title, depth: row.depth, body: includeBodies ? row.body : "", children: [] as PageNode[] }]));
@@ -70,8 +71,12 @@ function errorStatus(message: string) {
 }
 
 async function ensureSchema() {
+  if (schemaReady) {
+    await schemaReady;
+    return;
+  }
   const db = env.DB;
-  await db.batch([
+  schemaReady = db.batch([
     db.prepare("CREATE TABLE IF NOT EXISTS practices (id TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL, created_at TEXT NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS practice_members (practice_id TEXT NOT NULL, user_id TEXT NOT NULL, email TEXT NOT NULL, role TEXT NOT NULL, created_at TEXT NOT NULL)"),
     db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_practice_members_practice_user ON practice_members(practice_id, user_id)"),
@@ -90,6 +95,12 @@ async function ensureSchema() {
     db.prepare("CREATE TABLE IF NOT EXISTS template_assets (practice_id TEXT NOT NULL, id TEXT NOT NULL, data BLOB, external_url TEXT, title TEXT NOT NULL, mime TEXT NOT NULL, PRIMARY KEY(practice_id, id))"),
     db.prepare("CREATE TABLE IF NOT EXISTS template_imports (practice_id TEXT PRIMARY KEY, import_id TEXT NOT NULL, root_page_id TEXT NOT NULL, package_version INTEGER NOT NULL, expected_pages INTEGER NOT NULL, expected_assets INTEGER NOT NULL, started_at TEXT NOT NULL, started_by TEXT NOT NULL)"),
   ]);
+  try {
+    await schemaReady;
+  } catch (error) {
+    schemaReady = null;
+    throw error;
+  }
 }
 
 async function activeTemplateImport(context: Context, importId: string | undefined) {
@@ -292,7 +303,7 @@ export async function POST(request: Request) {
     } else if (body.action === "importTemplatePages") {
       const activeImport = await activeTemplateImport(context, body.importId);
       if (!activeImport) return json({ error: "IMPORT_SESSION_EXPIRED" }, 409);
-      if (!Array.isArray(body.pages) || body.pages.length < 1 || body.pages.length > 12) throw new Error("INVALID_TEMPLATE_PACKAGE");
+      if (!Array.isArray(body.pages) || body.pages.length < 1 || body.pages.length > 6) throw new Error("INVALID_TEMPLATE_PACKAGE");
       body.pages.forEach(validateTemplatePage);
       const uniqueIds = new Set(body.pages.map((page) => page.id));
       if (uniqueIds.size !== body.pages.length) throw new Error("INVALID_TEMPLATE_PACKAGE");
