@@ -7,6 +7,9 @@
       "DB": {
         "description": "Eigene Datenbank der Praxis für Rollen, Entwürfe und Freigaben."
       },
+      "QM_OWNER_EMAIL": {
+        "description": "E-Mail-Adresse der Praxisinhaberin oder des Praxisinhabers. Sie muss beim ersten Anmelden exakt verwendet werden."
+      },
       "QM_SINGLE_TENANT": {
         "description": "Bleibt auf true: Diese Installation gehört genau einer Praxis."
       }
