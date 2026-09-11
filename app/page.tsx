@@ -230,7 +230,7 @@ export default function Home() {
   const [importProgress, setImportProgress] = useState(0);
   const [importStage, setImportStage] = useState("");
   const [notice, setNotice] = useState("");
-  const [loadError, setLoadError] = useState<"AUTH_REQUIRED" | "NOT_INVITED" | "LOAD_FAILED" | null>(null);
+  const [loadError, setLoadError] = useState<"AUTH_REQUIRED" | "NOT_INVITED" | "OWNER_EMAIL_MISMATCH" | "OWNER_CONFIGURATION_REQUIRED" | "LOAD_FAILED" | null>(null);
 
   async function load() {
     try {
@@ -239,7 +239,7 @@ export default function Home() {
       if (response.ok) { setData(next as HandbookData); setLoadError(null); }
       else {
         const error = "error" in next ? next.error : undefined;
-        setLoadError(error === "AUTH_REQUIRED" || error === "NOT_INVITED" ? error : "LOAD_FAILED");
+        setLoadError(error === "AUTH_REQUIRED" || error === "NOT_INVITED" || error === "OWNER_EMAIL_MISMATCH" || error === "OWNER_CONFIGURATION_REQUIRED" ? error : "LOAD_FAILED");
       }
     } catch {
       setLoadError("LOAD_FAILED");
@@ -296,7 +296,7 @@ export default function Home() {
     if (!inviteForm.email.trim()) { setNotice("Bitte gib eine E-Mail-Adresse ein."); return; }
     if (await action({ action: "inviteMember", email: inviteForm.email, role: inviteForm.role })) {
       setInviteForm({ email: "", role: "viewer" });
-      setNotice("Die Einladung wurde für das Praxisteam vorgemerkt.");
+      setNotice("Die Person wurde freigeschaltet und kann sich jetzt mit dieser E-Mail-Adresse anmelden.");
     }
   }
   async function importTemplate(file: File) {
@@ -388,8 +388,14 @@ export default function Home() {
   }
 
   if (loadError) {
-    const notInvited = loadError === "NOT_INVITED";
-    return <main className="access-error"><section><div className="brand-mark"><ShieldCheck size={22} /></div><p className="eyebrow">GESCHÜTZTES QM-HANDBUCH</p><h1>{notInvited ? "Noch nicht für diese Praxis freigeschaltet" : "Anmeldung erforderlich"}</h1><p>{notInvited ? "Bitte lasse deine E-Mail-Adresse von der Praxisleitung im Bereich „Praxis & Team“ hinzufügen." : "Diese Installation ist noch nicht mit Cloudflare Access geschützt oder die Anmeldung wurde nicht an das QM-Handbuch übermittelt."}</p><button onClick={() => void load()}>Erneut versuchen</button></section></main>;
+    const errorContent = {
+      NOT_INVITED: ["Noch nicht für diese Praxis freigeschaltet", "Bitte lasse deine E-Mail-Adresse von der Praxisleitung im Bereich „Praxis & Team“ hinzufügen."],
+      OWNER_EMAIL_MISMATCH: ["Andere Inhaber-E-Mail hinterlegt", "Diese neue Installation wurde für eine andere Inhaber-E-Mail eingerichtet. Melde dich mit der beim Installieren angegebenen Adresse an."],
+      OWNER_CONFIGURATION_REQUIRED: ["Inhaber-E-Mail noch nicht eingerichtet", "Öffne die Einstellungen dieses Workers in Cloudflare und trage unter Variablen die Inhaber-E-Mail bei QM_OWNER_EMAIL ein."],
+      AUTH_REQUIRED: ["Anmeldung erforderlich", "Diese Installation ist noch nicht mit Cloudflare Access geschützt oder die Anmeldung wurde nicht an das QM-Handbuch übermittelt."],
+      LOAD_FAILED: ["Handbuch konnte nicht geladen werden", "Bitte prüfe deine Verbindung und versuche es erneut."],
+    }[loadError];
+    return <main className="access-error"><section><div className="brand-mark"><ShieldCheck size={22} /></div><p className="eyebrow">GESCHÜTZTES QM-HANDBUCH</p><h1>{errorContent[0]}</h1><p>{errorContent[1]}</p><button onClick={() => void load()}>Erneut versuchen</button></section></main>;
   }
 
   if (!data) return <main className="access-error"><section><div className="brand-mark"><BookOpen size={22} /></div><p className="eyebrow">QM-HANDBUCH</p><h1>Handbuch wird geladen</h1><p>Die geschützten Praxisdaten und Vorlagen werden vorbereitet.</p></section></main>;
@@ -459,8 +465,8 @@ export default function Home() {
             <div className="permission-summary"><div><ShieldCheck size={16} /><span><strong>QM-Bearbeitung</strong> darf Seiten auswählen, bearbeiten und freigeben.</span></div><div><Eye size={16} /><span><strong>Nur lesen</strong> sieht ausschließlich das freigegebene Praxis-Handbuch.</span></div></div>
             <div className="management-section-head"><div><h3>Praxisteam</h3><p>{data?.members.length ?? 0} aktive {(data?.members.length ?? 0) === 1 ? "Person" : "Personen"}</p></div></div>
             <div className="member-list">{(data?.members ?? []).map((member) => <div className="member-row" key={member.userId}><div className="member-avatar">{member.email.slice(0, 2).toUpperCase()}</div><div className="member-info"><strong>{member.email === data?.currentUser.email ? "Du" : member.email}</strong><span>{member.email}</span></div>{member.role === "owner" ? <span className="owner-label">Praxisinhaber:in</span> : <><select aria-label={`Rolle von ${member.email}`} value={member.role} disabled={busy} onChange={(event) => void action({ action: "updateMemberRole", memberUserId: member.userId, role: event.target.value })}><option value="editor">QM-Bearbeitung</option><option value="viewer">Nur lesen</option></select><button className="icon-danger" aria-label={`${member.email} entfernen`} disabled={busy} onClick={() => { if (window.confirm(`${member.email} wirklich aus dem Praxisteam entfernen?`)) void action({ action: "removeMember", memberUserId: member.userId }); }}><Trash2 size={15} /></button></>}</div>)}</div>
-            {(data?.invitations.length ?? 0) > 0 && <><div className="management-section-head pending-head"><div><h3>Vorgemerkte Einladungen</h3><p>Werden beim ersten angemeldeten Aufruf automatisch aktiviert.</p></div></div><div className="member-list">{data?.invitations.map((invitation) => <div className="member-row pending" key={invitation.id}><div className="member-avatar"><Clock3 size={15} /></div><div className="member-info"><strong>{invitation.email}</strong><span>{invitation.role === "editor" ? "QM-Bearbeitung" : "Nur lesen"}</span></div><span className="pending-label">Ausstehend</span><button className="icon-danger" aria-label={`Einladung für ${invitation.email} zurückziehen`} disabled={busy} onClick={() => void action({ action: "cancelInvite", id: invitation.id })}><X size={15} /></button></div>)}</div></>}
-            <div className="private-site-note"><ShieldCheck size={18} /><div><strong>Geschützte Praxis-Installation</strong><p>Eine E-Mail wird noch nicht automatisch versendet. Die Person meldet sich über Cloudflare Access mit derselben E-Mail-Adresse an; danach wird ihre vorgemerkte Rolle beim ersten Aufruf übernommen.</p></div></div>
+            {(data?.invitations.length ?? 0) > 0 && <><div className="management-section-head pending-head"><div><h3>Noch nicht angemeldet</h3><p>Diese Personen werden bei ihrer ersten Anmeldung automatisch aktiviert.</p></div></div><div className="member-list">{data?.invitations.map((invitation) => <div className="member-row pending" key={invitation.id}><div className="member-avatar"><Clock3 size={15} /></div><div className="member-info"><strong>{invitation.email}</strong><span>{invitation.role === "editor" ? "QM-Bearbeitung" : "Nur lesen"}</span></div><span className="pending-label">Ausstehend</span><button className="icon-danger" aria-label={`Freigabe für ${invitation.email} zurückziehen`} disabled={busy} onClick={() => void action({ action: "cancelInvite", id: invitation.id })}><X size={15} /></button></div>)}</div></>}
+            <div className="private-site-note"><ShieldCheck size={18} /><div><strong>Zugang vollständig hier verwalten</strong><p>Cloudflare bestätigt nur die E-Mail-Adresse. Wer das Handbuch sehen oder bearbeiten darf, legst du ausschließlich hier fest. Teile der Person anschließend einfach den Link zum Handbuch mit.</p></div></div>
           </section>}
         </div>
       </SheetContent>
