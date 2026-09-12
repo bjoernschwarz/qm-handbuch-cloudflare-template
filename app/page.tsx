@@ -296,7 +296,15 @@ export default function Home() {
     if (!inviteForm.email.trim()) { setNotice("Bitte gib eine E-Mail-Adresse ein."); return; }
     if (await action({ action: "inviteMember", email: inviteForm.email, role: inviteForm.role })) {
       setInviteForm({ email: "", role: "viewer" });
-      setNotice("Die Person wurde freigeschaltet und kann sich jetzt mit dieser E-Mail-Adresse anmelden.");
+      setNotice("Die Person ist freigeschaltet. Kopiere jetzt den Handbuch-Link und sende ihn ihr.");
+    }
+  }
+  async function copyHandbookLink() {
+    try {
+      await navigator.clipboard.writeText(window.location.origin);
+      setNotice("Der Handbuch-Link wurde kopiert und kann jetzt versendet werden.");
+    } catch {
+      setNotice(`Handbuch-Link: ${window.location.origin}`);
     }
   }
   async function importTemplate(file: File) {
@@ -461,12 +469,12 @@ export default function Home() {
             <div className="management-actions"><button className="management-primary" disabled={busy} onClick={() => void savePractice()}><Save size={15} /> Praxisdaten speichern</button></div>
           </section>}
           {settingsTab === "team" && <section className="team-settings">
-            <div className="invite-card"><div className="invite-heading"><div className="management-icon soft"><UserPlus size={18} /></div><div><h3>Person hinzufügen</h3><p>Lege fest, ob die Person bearbeiten oder ausschließlich lesen darf.</p></div></div><div className="invite-form"><label><span>E-Mail-Adresse</span><div className="email-input"><Mail size={15} /><input type="email" value={inviteForm.email} onChange={(event) => setInviteForm({ ...inviteForm, email: event.target.value })} placeholder="name@praxis.de" /></div></label><label><span>Rolle</span><select value={inviteForm.role} onChange={(event) => setInviteForm({ ...inviteForm, role: event.target.value as "editor" | "viewer" })}><option value="viewer">Nur lesen</option><option value="editor">QM-Bearbeitung</option></select></label><button className="management-primary" disabled={busy} onClick={() => void inviteMember()}><UserPlus size={15} /> Einladen</button></div></div>
+            <div className="invite-card"><div className="invite-heading"><div className="management-icon soft"><UserPlus size={18} /></div><div><h3>Person freischalten</h3><p>Lege fest, ob die Person bearbeiten oder ausschließlich lesen darf.</p></div></div><div className="invite-form"><label><span>E-Mail-Adresse</span><div className="email-input"><Mail size={15} /><input type="email" value={inviteForm.email} onChange={(event) => setInviteForm({ ...inviteForm, email: event.target.value })} placeholder="name@praxis.de" /></div></label><label><span>Rolle</span><select value={inviteForm.role} onChange={(event) => setInviteForm({ ...inviteForm, role: event.target.value as "editor" | "viewer" })}><option value="viewer">Nur lesen</option><option value="editor">QM-Bearbeitung</option></select></label><button className="management-primary" disabled={busy} onClick={() => void inviteMember()}><UserPlus size={15} /> Freischalten</button></div></div>
             <div className="permission-summary"><div><ShieldCheck size={16} /><span><strong>QM-Bearbeitung</strong> darf Seiten auswählen, bearbeiten und freigeben.</span></div><div><Eye size={16} /><span><strong>Nur lesen</strong> sieht ausschließlich das freigegebene Praxis-Handbuch.</span></div></div>
             <div className="management-section-head"><div><h3>Praxisteam</h3><p>{data?.members.length ?? 0} aktive {(data?.members.length ?? 0) === 1 ? "Person" : "Personen"}</p></div></div>
             <div className="member-list">{(data?.members ?? []).map((member) => <div className="member-row" key={member.userId}><div className="member-avatar">{member.email.slice(0, 2).toUpperCase()}</div><div className="member-info"><strong>{member.email === data?.currentUser.email ? "Du" : member.email}</strong><span>{member.email}</span></div>{member.role === "owner" ? <span className="owner-label">Praxisinhaber:in</span> : <><select aria-label={`Rolle von ${member.email}`} value={member.role} disabled={busy} onChange={(event) => void action({ action: "updateMemberRole", memberUserId: member.userId, role: event.target.value })}><option value="editor">QM-Bearbeitung</option><option value="viewer">Nur lesen</option></select><button className="icon-danger" aria-label={`${member.email} entfernen`} disabled={busy} onClick={() => { if (window.confirm(`${member.email} wirklich aus dem Praxisteam entfernen?`)) void action({ action: "removeMember", memberUserId: member.userId }); }}><Trash2 size={15} /></button></>}</div>)}</div>
             {(data?.invitations.length ?? 0) > 0 && <><div className="management-section-head pending-head"><div><h3>Noch nicht angemeldet</h3><p>Diese Personen werden bei ihrer ersten Anmeldung automatisch aktiviert.</p></div></div><div className="member-list">{data?.invitations.map((invitation) => <div className="member-row pending" key={invitation.id}><div className="member-avatar"><Clock3 size={15} /></div><div className="member-info"><strong>{invitation.email}</strong><span>{invitation.role === "editor" ? "QM-Bearbeitung" : "Nur lesen"}</span></div><span className="pending-label">Ausstehend</span><button className="icon-danger" aria-label={`Freigabe für ${invitation.email} zurückziehen`} disabled={busy} onClick={() => void action({ action: "cancelInvite", id: invitation.id })}><X size={15} /></button></div>)}</div></>}
-            <div className="private-site-note"><ShieldCheck size={18} /><div><strong>Zugang vollständig hier verwalten</strong><p>Cloudflare bestätigt nur die E-Mail-Adresse. Wer das Handbuch sehen oder bearbeiten darf, legst du ausschließlich hier fest. Teile der Person anschließend einfach den Link zum Handbuch mit.</p></div></div>
+            <div className="private-site-note"><ShieldCheck size={18} /><div className="private-site-copy"><strong>Zugang vollständig hier verwalten</strong><p>Cloudflare bestätigt nur die E-Mail-Adresse. Wer das Handbuch sehen oder bearbeiten darf, legst du ausschließlich hier fest.</p><button type="button" onClick={() => void copyHandbookLink()}><ClipboardCopy size={14} /> Handbuch-Link kopieren</button></div></div>
           </section>}
         </div>
       </SheetContent>
