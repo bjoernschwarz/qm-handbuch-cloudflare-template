@@ -14,7 +14,7 @@ Das lizenzierte Musterhandbuch ist **nicht** Bestandteil dieses öffentlichen In
 
 ## Kundenablauf
 
-1. **In Cloudflare bereitstellen** – oben auf „Deploy to Cloudflare“ klicken, bei `QM_OWNER_EMAIL` die genaue E-Mail-Adresse der Praxisinhaberin oder des Praxisinhabers eintragen und die Bereitstellung im eigenen Cloudflare-Konto bestätigen.
+1. **In Cloudflare bereitstellen** – oben auf „Deploy to Cloudflare“ klicken, bei `QM_OWNER_EMAIL` die genaue E-Mail-Adresse der Praxisinhaberin oder des Praxisinhabers eintragen und die Bereitstellung im eigenen Cloudflare-Konto bestätigen. Den Schalter **Protect with Cloudflare Access** dabei zunächst ausgeschaltet lassen; die passende Einmalcode-Regel wird im nächsten Schritt einmalig eingerichtet.
 2. **Zugriff einmalig schützen** – in Cloudflare Zero Trust eine Access-Anwendung für die neue `workers.dev`-Adresse anlegen. In der Zugriffsregel unter **Include → Login Methods** ausschließlich **One-time PIN** auswählen.
 3. **Erstmals anmelden** – mit genau der bei `QM_OWNER_EMAIL` hinterlegten Adresse anmelden. Nur diese Person kann eine leere Installation als Praxisinhaber:in eröffnen.
 4. **Musterhandbuch installieren** – das geschützte `.qmpackage` über die angezeigte Einrichtungsseite auswählen.
