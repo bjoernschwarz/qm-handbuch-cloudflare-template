@@ -12,6 +12,7 @@ type TemplatePackage = { format: "heilmittel-qm-template"; version: number; root
 type TemplateImportRow = { importId: string; rootPageId: string; packageVersion: number; expectedPages: number; expectedAssets: number };
 const SOURCE_CONTENT = "__QM_SOURCE_ADF__";
 const HTML_CONTENT = "__QM_RICH_HTML__";
+const OWNER_EMAIL_PLACEHOLDER = "inhaber@ihre-praxis.de";
 let schemaReady: Promise<unknown> | null = null;
 
 function buildTree(rows: TemplatePageRow[], rootPageId: string, includeBodies: boolean): PageNode | null {
@@ -66,8 +67,17 @@ async function currentUser(): Promise<User> {
 
 function errorStatus(message: string) {
   if (message === "AUTH_REQUIRED") return 401;
-  if (message === "NOT_INVITED") return 403;
+  if (message === "NOT_INVITED" || message === "OWNER_EMAIL_MISMATCH") return 403;
+  if (message === "OWNER_CONFIGURATION_REQUIRED") return 503;
   return 500;
+}
+
+function configuredOwnerEmail() {
+  const email = env.QM_OWNER_EMAIL?.trim().toLowerCase();
+  if (!email || email === OWNER_EMAIL_PLACEHOLDER || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new Error("OWNER_CONFIGURATION_REQUIRED");
+  }
+  return email;
 }
 
 async function ensureSchema() {
@@ -140,6 +150,7 @@ async function getContext(): Promise<Context> {
       if (env.QM_SINGLE_TENANT === "true") {
         const existingPractice = await env.DB.prepare("SELECT id FROM practices LIMIT 1").first<{ id: string }>();
         if (existingPractice) throw new Error("NOT_INVITED");
+        if (user.id !== "local-owner" && user.email !== configuredOwnerEmail()) throw new Error("OWNER_EMAIL_MISMATCH");
       }
       const practiceId = crypto.randomUUID();
       await env.DB.batch([
